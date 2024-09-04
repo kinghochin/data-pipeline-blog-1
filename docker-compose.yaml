@@ -27,6 +27,13 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: secret
 
+  redis:
+    image: redis:latest
+    ports:
+      - "6378:6379"
+    networks:
+      - elt_network
+
   airflow_db:
     image: postgres:latest
     networks:
@@ -55,13 +62,16 @@ services:
     user: root
     depends_on:
       - airflow_db
+      - redis
     networks:
       - elt_network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/airflow.cfg:/opt/airflow/airflow.cfg
       - ./script:/opt/airflow/script
+      - ./plugins:/opt/airflow/plugins
       - ~/.dbt:/root/.dbt
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -74,6 +84,9 @@ services:
       - AIRFLOW_WWW_USER_USERNAME=airflow
       - AIRFLOW_WWW_USER_PASSWORD=password
       - AIRFLOW__WEBSERVER__SECRET_KEY=secret
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
     ports:
       - "8080:8080"
     command: webserver
@@ -85,13 +98,15 @@ services:
     user: root
     depends_on:
       - airflow_db
+      - redis
     networks:
       - elt_network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
-      - ./script:/opt/airflow/script
+      - ./script:/opt/airflow/
+      - ./plugins:/opt/airflow/plugins
       - ~/.dbt:/root/.dbt
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -102,7 +117,44 @@ services:
       - AIRFLOW__WEBSERVER__SECRET_KEY=secret
       - AIRFLOW_WWW_USER_USERNAME=airflow
       - AIRFLOW_WWW_USER_PASSWORD=password
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@airflow_db/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
     command: scheduler
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: root
+    depends_on:
+      - airflow_db
+      - redis
+    networks:
+      - elt_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./script:/opt/airflow/script
+      - ./plugins:/opt/airflow/plugins
+      - ~/.dbt:/root/.dbt
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Local
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow_db/airflow
+      - AIRFLOW_CONN_DESTINATION_POSTGRES=postgres://postgres:secret@destination_db:5434/destination_db
+      - AIRFLOW__WEBSERVER__SECRET_KEY=secret
+      - AIRFLOW_WWW_USER_USERNAME=airflow
+      - AIRFLOW_WWW_USER_PASSWORD=password
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@airflow_db/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    command: celery worker
+    restart: always
 
 networks:
   elt_network:

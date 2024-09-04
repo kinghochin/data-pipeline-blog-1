@@ -3,3 +3,4 @@ FROM apache/airflow:latest
 
 # Install the Docker provider for Airflow
 RUN pip install apache-airflow-providers-docker
+RUN pip install redis
